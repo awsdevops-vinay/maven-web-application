@@ -1,0 +1,66 @@
+node {
+    
+echo "Branch Name is : ${env.BRANCH_NAME}"
+echo "Job Name is : ${env.JOB_NAME}"
+echo "Build URL is : ${BUILD_URL}"
+
+properties([buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '5', daysToKeepStr: '', numToKeepStr: '5')), [$class: 'JobLocalConfiguration', changeReasonComment: ''], pipelineTriggers([pollSCM('* * * * *')])])
+def mavenHome = tool name : 'maven3.9.6'    
+try {    
+stage('checkOutCode'){
+	sendSlackNotifications("STARTED")
+    git branch: 'development', credentialsId: 'a0ac5685-05cb-4044-a365-e0364facf6b4', url: 'https://github.com/awsdevops-vinay/maven-web-application.git'
+    }
+stage('build'){
+sh "${mavenHome}/bin/mvn clean package"
+}
+
+stage('executeSonarQubeReport'){
+sh "${mavenHome}/bin/mvn clean sonar:sonar"
+}
+
+stage('UploadArtificatotyRepo'){
+sh "${mavenHome}/bin/mvn clean deploy"
+}
+  
+stage('DeployAppIntoTomcatserver'){
+sshagent(['8cc1045b-e55f-4367-99de-bd6856835407']) {
+    sh "scp -o StrictHostKeyChecking=no target/maven-web-application.war ec2-user@172.31.47.154:/opt/apache-tomcat-9.0.83/webapps/"
+  }
+} 
+} 
+
+catch (e){
+cuurentBuild.result = "FAILURE"
+throw e
+}
+finally {
+sendSlackNotifications(currentBuild.result)
+}
+}// node closing
+
+def sendSlackNotifications(String buildStatus = 'STARTED') {
+  // build status of null means successful
+   // buildStatus =  buildStatus ?: 'SUCCESSFUL'
+	buildStatus = buildStatus ? buildStatus : 'SUCCESSFUL'
+  // Default values
+  def colorName = 'RED'
+  def colorCode = '#FF0000'
+  def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+  def summary = "${subject} (${env.BUILD_URL})"
+
+  // Override default values based on build status
+  if (buildStatus == 'STARTED') {
+    colorName = 'YELLOW'
+    colorCode = '#FFFF00'
+  } else if (buildStatus == 'SUCCESSFUL') {
+    colorName = 'GREEN'
+    colorCode = '#00FF00'
+  } else {
+    colorName = 'RED'
+    colorCode = '#FF0000'
+  }
+
+  // Send notifications
+  slackSend (color: colorCode, message: summary)
+}
